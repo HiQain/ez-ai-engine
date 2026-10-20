@@ -42,8 +42,10 @@ services:
     build: .
     restart: unless-stopped
     environment: *ez-env
+    # Bind to localhost only — put a reverse proxy (your panel) in front for
+    # the public domain + HTTPS. Keeps ez off the raw internet.
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ez_uploads:/app/uploads
     extra_hosts:
