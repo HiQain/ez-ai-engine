@@ -1,0 +1,30 @@
+# Secrets — never bake env files into the image
+.env
+.env.*
+
+# Virtualenv / Python caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local runtime data
+uploads/
+*.log
+
+# Dev / VCS / editor
+.git/
+.gitignore
+.idea/
+.vscode/
+
+# Not needed in the image
+tests/
+*.xlsx
+php-output
+docker-compose.yml
+Dockerfile
+README*.md

@@ -1,0 +1,81 @@
+# ez (FastAPI AI engine) — self-contained stack for deployment.
+#
+#   docker compose --env-file .env.docker up -d --build
+#
+# Services: api (uvicorn), worker (Celery + beat for code-sync polling),
+# redis (broker/result backend). MySQL is NOT bundled — you create ez's database
+# in your panel and paste its connection string as DATABASE_URL.
+# Laravel is NOT here either — it stays on your panel. ez reaches it via LARAVEL_API_URL.
+
+# Shared app config for both api and worker. Redis uses the service name; the
+# database and secrets come from .env.docker.
+x-ez-env: &ez-env
+  # Full SQLAlchemy URL to the MySQL you made in your panel, e.g.
+  #   mysql+pymysql://USER:PASSWORD@HOST:3306/DBNAME
+  # If that DB lives on the same machine as Docker, use the host's IP or
+  # host.docker.internal as HOST — not 127.0.0.1 (that's the container itself).
+  DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env.docker}
+  CELERY_BROKER_URL: redis://redis:6379/0
+  CELERY_RESULT_BACKEND: redis://redis:6379/1
+  ENGINE_API_KEY: ${ENGINE_API_KEY:?set ENGINE_API_KEY in .env.docker}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY in .env.docker}
+  # The deployed Laravel base URL ez polls for code sync (e.g. https://api.ezestimater.com).
+  LARAVEL_API_URL: ${LARAVEL_API_URL:-http://host.docker.internal:8001}
+  # Langfuse is optional: leave blank to disable tracing.
+  LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+  LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+  LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-}
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - ez_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  api:
+    build: .
+    restart: unless-stopped
+    environment: *ez-env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ez_uploads:/app/uploads
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+    # Apply DB migrations (to your external MySQL), then serve.
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    build: .
+    restart: unless-stopped
+    environment: *ez-env
+    volumes:
+      - ez_uploads:/app/uploads
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    # Celery worker + embedded beat (-B) runs the takeoff analysis and the
+    # every-5-min code-sync poll. Single worker instance, so one beat is fine.
+    command: celery -A app.core.celery_app:celery_app worker -B --concurrency=2 --loglevel=info
+
+volumes:
+  ez_redis:
+  ez_uploads:
