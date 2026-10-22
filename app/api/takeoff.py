@@ -18,6 +18,7 @@ from app.schemas.takeoff import (
 from app.schemas.matching import DetectedMatchItem, ProductMatchingResponse
 from app.tasks.takeoff_tasks import analyze_takeoff_task
 from app.services.catalog_service import catalog_service, CatalogServiceError
+from app.services.company_catalog import get_company_catalog
 from app.services.product_matching_service import (
     match_products,
     ProductMatchingServiceError,
@@ -357,6 +358,10 @@ def delete_takeoff_item(
 )
 def match_takeoff_items(
     job_id: int,
+    company_id: int | None = Query(
+        default=None,
+        description="Match only against this company's synced codes.",
+    ),
     db: Session = Depends(get_db),
 ):
     job = db.query(TakeoffJob).filter(
@@ -390,13 +395,8 @@ def match_takeoff_items(
     # making them, then verify the item IDs again while saving the results.
     db.rollback()
 
-    try:
-        catalog_products = catalog_service.get_products()
-    except CatalogServiceError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=str(exc),
-        ) from exc
+    # Match against the company's own synced codes (not the global catalog).
+    catalog_products = get_company_catalog(db, company_id)
 
     try:
         with propagate_attributes(
